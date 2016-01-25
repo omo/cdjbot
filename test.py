@@ -1,5 +1,5 @@
 
-import bot
+import cdjbot as bot
 import unittest
 import unittest.mock as mock
 
