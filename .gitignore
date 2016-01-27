@@ -1,3 +1,4 @@
 env
 __pycache__
 local.sh
+conf/cdjbot.conf

@@ -1,0 +1,10 @@
+description "CDJBot container"
+author "Morrita"
+start on filesystem and started docker
+stop on runlevel [!2345]
+respawn
+
+script
+  /usr/bin/docker run -t --rm -e CDJBOT_TELEGRAM_TOKEN=INVALID morrita/cdjbot
+end script
+
