@@ -5,6 +5,14 @@ stop on runlevel [!2345]
 respawn
 
 script
-  /usr/bin/docker run -t --rm -e CDJBOT_TELEGRAM_TOKEN=INVALID morrita/cdjbot
+  /usr/bin/docker run -t --rm \
+     --name cdjbot-prod \
+     -e CDJBOT_TELEGRAM_TOKEN=INVALID \
+     -e CDJBOT_MONGO_URL=INVALID \
+     morrita/cdjbot
 end script
 
+post-stop script
+    /usr/bin/docker stop cdjbot-prod
+    /usr/bin/docker rm cdjbot-prod
+end script
