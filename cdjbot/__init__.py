@@ -187,9 +187,9 @@ class AbortConversation(ClosingConversation):
         # XXX: Include stats
 
 #
-# Data storage
+# In-memory Data storage
 #
-class MemoryStore:
+class MemoryStore(object):
     def __init__(self):
         self._records = []
 
@@ -202,6 +202,15 @@ class MemoryStore:
     def find_last_open_for(self, owner_id):
         found = [ r for r in  self._records if r.owner_id == owner_id and r.state == Record.OPEN ]
         return found[-1] if found else None
+
+#
+# Mongo-backed Data Storage
+#
+class MongoStore(object):
+    def __init__(self, client):
+        self._client = client
+        self._db = self._client.get_default_database()
+        print("DB Name: {}".format(self._db.name))
 
 #
 # Wrapping message JSON dict
@@ -281,9 +290,9 @@ class DojoBot(telepot.Bot):
 # God class.
 #
 class DojoBotApp(object):
-    def __init__(self, bot):
+    def __init__(self, bot, store=None):
         self._bot = bot
-        self._store = MemoryStore() # TODO(omo): Pass from param
+        self._store = store or MemoryStore()
         self._conversations = {}
 
     def start(self):

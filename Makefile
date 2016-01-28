@@ -1,5 +1,4 @@
 
-ENVS=CDJBOT_TELEGRAM_TOKEN="${CDJBOT_TELEGRAM_TOKEN}"
 HOST=ubuntu@54.152.53.180
 SSH_KEYFILE=~/.ssh/omokey.pem
 MONGO_NAME=cdjbot-mongo
@@ -8,13 +7,15 @@ MONGO_NAME=cdjbot-mongo
 # 27017 is the default mongo port
 MONGO_PORT=27017
 DOCKER_HOST_ADDR=${shell python dockerip.py}
+DOCKER_IMAGE_NAME=morrita/cdjbot
+DOCKER_ENVS=-e CDJBOT_TELEGRAM_TOKEN="${CDJBOT_TELEGRAM_TOKEN}" -e CDJBOT_MONGO_URL="${CDJBOT_MONGO_URL}"
 
 dbuild:
-	docker build --rm -t morrita/cdjbot .
+	docker build --rm -t ${DOCKER_IMAGE_NAME} .
 dbash: dbuild
-	docker run --rm -t -i cdjbot /bin/bash
+	docker run --rm -t -i ${DOCKER_IMAGE_NAME} /bin/bash
 drun: dbuild
-	docker run --rm -t -i -e ${ENVS} cdjbot
+	docker run --rm -t -i ${DOCKER_ENVS} ${DOCKER_IMAGE_NAME}
 dpush: dbuild
 	docker push morrita/cdjbot
 
@@ -29,7 +30,7 @@ mongocli:
 
 push:
 	scp -i ${SSH_KEYFILE} conf/cdjbot.conf ${HOST}:/tmp/cdjbot.conf
-	ssh -i ${SSH_KEYFILE} ${HOST} docker pull morrita/cdjbot
+	ssh -i ${SSH_KEYFILE} ${HOST} docker pull ${DOCKER_IMAGE_NAME}
 	ssh -i ${SSH_KEYFILE} ${HOST} sudo cp /tmp/cdjbot.conf /etc/init/
 	ssh -i ${SSH_KEYFILE} ${HOST} sudo service cdjbot restart
 .PHONY: dbuild push monogostart mongostop

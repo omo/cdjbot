@@ -15,4 +15,5 @@ ADD main.py $APP_HOME
 ADD cdjbot/ $APP_HOME/cdjbot
 
 ENV CDJBOT_TELEGRAM_TOKEN=INVALID
+ENV CDJBOT_MONGO_URL=INVALID
 CMD . env/bin/activate && python3 main.py

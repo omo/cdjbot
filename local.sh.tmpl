@@ -1,5 +1,6 @@
 #!/bin/sh
 
 . ./env/bin/activate
-CDJBOT_TELEGRAM_TOKEN=FILLME make drun
-
+CDJBOT_TELEGRAM_TOKEN=INVALID \
+CDJBOT_MONGO_URL=`./dockerip.py -u -d cdjbot` \
+make drun
