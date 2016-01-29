@@ -1,5 +1,4 @@
 import os, sys
-import pymongo
 import cdjbot
 
 if __name__ == "__main__":
@@ -13,7 +12,7 @@ if __name__ == "__main__":
         sys.exit(-1)
 
     bot = cdjbot.DojoBot(tg_token)
-    store = cdjbot.MongoStore(pymongo.MongoClient(mongo_url))
+    store = cdjbot.MongoStore(mongo_url)
     app = cdjbot.DojoBotApp(bot, store)
     app.start()
     print("Done.")

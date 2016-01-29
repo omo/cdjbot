@@ -3,6 +3,8 @@ import telepot.namedtuple as nt
 import collections
 import re
 import datetime
+import pymongo
+import functools as ft
 
 #
 # Checkin record to persist.
@@ -78,6 +80,21 @@ class Record(collections.namedtuple(
         return self._replace(
             finished_at=datetime.datetime.utcnow(),
             state=self.ABORTED)
+
+    @classmethod
+    def from_dict(cls, d):
+        # Has side effect here. Shouldn't we do this or don't we care?
+        if d['_id']:
+            d['id'] = d['_id']
+            del d['_id']
+        return Record(**d)
+
+    def to_dict(self):
+        # http://stackoverflow.com/questions/26180528/python-named-tuple-to-dictionary
+        d = vars(super()) or super()._asdict()
+        # Omit 'id' - This value comes from _id and we'll have it anyway.
+        del d['id']
+        return d
 
 #
 # Handling per-user, short-term chat continuation
@@ -207,10 +224,29 @@ class MemoryStore(object):
 # Mongo-backed Data Storage
 #
 class MongoStore(object):
-    def __init__(self, client):
-        self._client = client
+    COL_RECORD = 'records'
+
+    def __init__(self, url):
+        self._client = pymongo.MongoClient(url)
         self._db = self._client.get_default_database()
+        self._records = self._db[self.COL_RECORD]
         print("DB Name: {}".format(self._db.name))
+
+    # This is MongoStore specific, used from unit tests.
+    def drop_all_collections(self):
+        self._db.drop_collection(self.COL_RECORD)
+
+    def add_record(self, rec):
+        self._records.insert_one(rec.to_dict())
+
+    def find_last_open_for(self, owner_id):
+        cursor = self._records.find({ 'owner_id': owner_id, 'state': Record.OPEN })
+        found = ft.reduce(lambda a,i: i, cursor, None)
+        return Record.from_dict(found) if found else None
+
+    def update_record(self, rec):
+        self._records.update_one({"_id": rec.id }, { "$set": rec.to_dict() })
+
 
 #
 # Wrapping message JSON dict

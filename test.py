@@ -2,19 +2,21 @@
 import cdjbot as bot
 import unittest
 import unittest.mock as mock
+import dockerip
 
 class HelloTest(unittest.TestCase):
     def test_hello(self):
         self.assertTrue(True)
 
+DOCKER_MONGO_URL=dockerip.get_docker_host_mongo_url("cdjbot-test")
 USER_ID = 1234
 
-def make_message_dict(text):
-    return { 'from': { 'id': USER_ID, 'firstname': 'Alice', 'username': 'alice' }, 'text': text }
+def make_message_dict(text, user_id=USER_ID):
+    return { 'from': { 'id': user_id, 'firstname': 'Alice', 'username': 'alice' }, 'text': text }
 
 
-def make_message_with_text(text):
-    return bot.Message(make_message_dict(text))
+def make_message_with_text(text, **kwargs):
+    return bot.Message(make_message_dict(text, **kwargs))
 
 
 class RecordTest(unittest.TestCase):
@@ -144,6 +146,33 @@ class ClosingTest(ConversationTest):
             self._bot, self._store, make_message_with_text('/co'))
         self.assertFalse(co.needs_more())
         self._bot.tell_error.assert_called_once_with(USER_ID, mock.ANY)
+
+
+class StoreTestMixin(object):
+    def test_add_and_find(self):
+        rec1a = bot.Record.from_message(make_message_with_text('/ci15 REC1', user_id=1))
+        rec2a = bot.Record.from_message(make_message_with_text('/ci15 REC2', user_id=2))
+        for r in [rec1a, rec2a]:
+            self._store.add_record(r)
+        open1a = self._store.find_last_open_for(1)
+        self.assertEqual(open1a.topic, 'REC1')
+        open2a = self._store.find_last_open_for(2)
+        self.assertEqual(open2a.topic, 'REC2')
+
+        self._store.update_record(open1a.with_closed())
+        open1b = self._store.find_last_open_for(1)
+        self.assertEqual(open1b, None)
+
+
+class MemoryStoreTest(unittest.TestCase, StoreTestMixin):
+    def setUp(self):
+        self._store = bot.MemoryStore()
+
+
+class MongoStoreTest(unittest.TestCase, StoreTestMixin):
+    def setUp(self):
+        self._store = bot.MongoStore(DOCKER_MONGO_URL)
+        self._store.drop_all_collections()
 
 
 class AppTest(unittest.TestCase):
