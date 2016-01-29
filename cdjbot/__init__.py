@@ -204,23 +204,6 @@ class AbortConversation(ClosingConversation):
         # XXX: Include stats
 
 #
-# In-memory Data storage
-#
-class MemoryStore(object):
-    def __init__(self):
-        self._records = []
-
-    def add_record(self, rec):
-        self._records.append(rec.with_id(len(self._records)))
-
-    def update_record(self, rec):
-        self._records[rec.id] = rec
-
-    def find_last_open_for(self, owner_id):
-        found = [ r for r in  self._records if r.owner_id == owner_id and r.state == Record.OPEN ]
-        return found[-1] if found else None
-
-#
 # Mongo-backed Data Storage
 #
 class MongoStore(object):
@@ -230,6 +213,8 @@ class MongoStore(object):
         self._client = pymongo.MongoClient(url)
         self._db = self._client.get_default_database()
         self._records = self._db[self.COL_RECORD]
+
+    def print_description(self):
         print("DB Name: {}".format(self._db.name))
 
     # This is MongoStore specific, used from unit tests.
@@ -246,6 +231,15 @@ class MongoStore(object):
 
     def update_record(self, rec):
         self._records.update_one({"_id": rec.id }, { "$set": rec.to_dict() })
+
+    def last_record(self):
+        # XXX: Super inefficient. Use it only for testing.
+        f = ft.reduce(lambda a,i: i, self._records.find(), None)
+        return Record.from_dict(f)
+
+    def record_count(self):
+        # XXX: Super inefficient. Use it only for testing.
+        return self._records.count()
 
 
 #
@@ -286,6 +280,9 @@ class Message(object):
 
 
 class DojoBot(telepot.Bot):
+    def print_description(self):
+        print("Bot:" + str(self.getMe()))
+
     def tell_error(self, chat_id, text):
         self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
 
@@ -326,9 +323,9 @@ class DojoBot(telepot.Bot):
 # God class.
 #
 class DojoBotApp(object):
-    def __init__(self, bot, store=None):
+    def __init__(self, bot, store):
         self._bot = bot
-        self._store = store or MemoryStore()
+        self._store = store
         self._conversations = {}
 
     def start(self):

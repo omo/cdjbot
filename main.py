@@ -13,6 +13,8 @@ if __name__ == "__main__":
 
     bot = cdjbot.DojoBot(tg_token)
     store = cdjbot.MongoStore(mongo_url)
+    bot.print_description()
+    store.print_description()
     app = cdjbot.DojoBotApp(bot, store)
     app.start()
     print("Done.")

@@ -11,6 +11,11 @@ class HelloTest(unittest.TestCase):
 DOCKER_MONGO_URL=dockerip.get_docker_host_mongo_url("cdjbot-test")
 USER_ID = 1234
 
+def make_clean_mongo_store():
+    store = bot.MongoStore(DOCKER_MONGO_URL)
+    store.drop_all_collections()
+    return store
+
 def make_message_dict(text, user_id=USER_ID):
     return { 'from': { 'id': user_id, 'firstname': 'Alice', 'username': 'alice' }, 'text': text }
 
@@ -57,13 +62,13 @@ class RecordTest(unittest.TestCase):
 class ConversationTest(unittest.TestCase):
     def setUp(self):
         self._bot = mock.Mock()
-        self._store = bot.MemoryStore()
+        self._store = make_clean_mongo_store()
 
     def assert_record_added(self):
-        self.assertEqual(len(self._store._records), 1)
+        self.assertEqual(self._store.record_count(), 1)
 
     def assert_record_not_added(self):
-        self.assertEqual(len(self._store._records), 0)
+        self.assertEqual(self._store.record_count(), 0)
 
     def assert_asking_none(self, co):
         self.assertTrue(co._asking == None)
@@ -72,7 +77,7 @@ class ConversationTest(unittest.TestCase):
         self.assertTrue(co._asking != None)
 
     def last_record(self):
-        return self._store._records[-1]
+        return self._store.last_record()
 
 
 class CheckinTest(ConversationTest):
@@ -164,27 +169,22 @@ class StoreTestMixin(object):
         self.assertEqual(open1b, None)
 
 
-class MemoryStoreTest(unittest.TestCase, StoreTestMixin):
-    def setUp(self):
-        self._store = bot.MemoryStore()
-
-
 class MongoStoreTest(unittest.TestCase, StoreTestMixin):
     def setUp(self):
-        self._store = bot.MongoStore(DOCKER_MONGO_URL)
-        self._store.drop_all_collections()
+        self._store = make_clean_mongo_store()
 
 
 class AppTest(unittest.TestCase):
     def setUp(self):
         self._bot = mock.Mock()
+        self._store = make_clean_mongo_store()
 
     def test_handle(self):
-        app = bot.DojoBotApp(self._bot)
+        app = bot.DojoBotApp(self._bot, self._store)
         app._handle(make_message_dict('/ci15 hello, world'))
 
     def test_checkin_checkout(self):
-        app = bot.DojoBotApp(self._bot)
+        app = bot.DojoBotApp(self._bot, self._store)
         app._handle(make_message_dict('/ci15 hello, world'))
         app._handle(make_message_dict('/co'))
 
