@@ -1,10 +1,13 @@
 import telepot
+import telepot.async
 import telepot.namedtuple as nt
 import collections
 import re
 import datetime
 import pymongo
 import functools as ft
+import asyncio
+
 
 #
 # Checkin record to persist.
@@ -107,6 +110,7 @@ class Conversation(object):
     def follow(self, update_message):
         raise Exception("Should never be called.")
 
+    @property
     def needs_more(self):
         return False
 
@@ -117,27 +121,35 @@ class CheckinConversation(Conversation):
     TOPIC = 'topic'
     MINUTES = 'minutes'
 
+    @classmethod
+    @asyncio.coroutine
+    def start(cls, bot, store, init_message):
+        c = cls(bot, store, init_message)
+        yield from c._carry()
+        return c
+
     def __init__(self, bot, store, init_message):
         super().__init__(bot, store)
         self._asking = None
         self._record = Record.from_message(init_message)
-        self._carry()
 
-
+    @asyncio.coroutine
     def _finish(self):
         self._asking = None
         self._store.add_record(self._record)
         # XXX: Broadcast to the dojo channel as well.
-        self._bot.declare_checkin(self._record)
+        yield from self._bot.declare_checkin(self._record)
 
+    @asyncio.coroutine
     def _ask(self):
         if not self._record.topic:
-            self._bot.ask_topic(self._record)
+            yield from self._bot.ask_topic(self._record)
             self._asking = self.TOPIC
         elif not self._record.planned_minutes:
-            self._bot.ask_minutes(self._record)
+            yield from self._bot.ask_minutes(self._record)
             self._asking = self.MINUTES
 
+    @asyncio.coroutine
     def _handle(self, message):
         if self._asking == self.TOPIC and message.text:
             self._record = self._record.with_topic(message.text)
@@ -145,48 +157,55 @@ class CheckinConversation(Conversation):
             try:
                 self._record = self._record.with_planned_minutes(int(message.text))
             except ValueError:
-                self._bot.tell_error(self._record.owner_id, "Doesn't seem like a number :-(")
+                yield from self._bot.tell_error(self._record.owner_id, "Doesn't seem like a number :-(")
         else:
-            self._bot.tell_error(self._record.owner_id, "Something wrong happened :-(")
+            yield from self._bot.tell_error(self._record.owner_id, "Something wrong happened :-(")
             self._record = None
 
+    @asyncio.coroutine
     def _carry(self):
-        if self.needs_more():
-            self._ask()
+        if self.needs_more:
+            yield from self._ask()
         else:
-            self._finish()
+            yield from self._finish()
 
     @property
     def key(self):
         return self._record.owner_id
 
+    @asyncio.coroutine
     def follow(self, update_message):
-        self._handle(update_message)
-        self._carry()
+        yield from self._handle(update_message)
+        yield from self._carry()
 
+    @property
     def needs_more(self):
         return self._record and self._record.needs_resolution()
 
-
 class ClosingConversation(Conversation):
-    def __init__(self, bot, store, init_message, closer):
-        super().__init__(bot, store)
-        rec = self._store.find_last_open_for(init_message.sender_id)
+    @classmethod
+    @asyncio.coroutine
+    def start(cls, bot, store, init_message):
+        c = cls(bot, store, init_message)
+        rec = c._store.find_last_open_for(init_message.sender_id)
         if not rec:
-            self._bot.tell_error(init_message.sender_id, "No ongoing checkin :-(")
-            return
-        closer(rec)
+            yield from c._bot.tell_error(init_message.sender_id, "No ongoing checkin :-(")
+        else:
+            yield from c._close(rec)
+        return c
+
+
+    def __init__(self, bot, store, init_message):
+        super().__init__(bot, store)
 
 #
 # Checkout
 #
 class CheckoutConversation(ClosingConversation):
-    def __init__(self, bot, store, init_message):
-        super().__init__(bot, store, init_message, self.close)
-
-    def close(self, rec):
+    @asyncio.coroutine
+    def _close(self, rec):
         self._store.update_record(rec.with_closed())
-        self._bot.declare_checkout(rec)
+        yield from self._bot.declare_checkout(rec)
         # XXX: Broadcast
         # XXX: Include stats
 
@@ -194,12 +213,10 @@ class CheckoutConversation(ClosingConversation):
 # Abort
 #
 class AbortConversation(ClosingConversation):
-    def __init__(self, bot, store, init_message):
-        super().__init__(bot, store, init_message, self.close)
-
-    def close(self, rec):
+    @asyncio.coroutine
+    def _close(self, rec):
         self._store.update_record(rec.with_aborted())
-        self._bot.declare_abort(rec)
+        yield from self._bot.declare_abort(rec)
         # XXX: Broadcast
         # XXX: Include stats
 
@@ -214,6 +231,7 @@ class MongoStore(object):
         self._db = self._client.get_default_database()
         self._records = self._db[self.COL_RECORD]
 
+    @asyncio.coroutine
     def print_description(self):
         print("DB Name: {}".format(self._db.name))
 
@@ -279,35 +297,38 @@ class Message(object):
         return self._data['text']
 
 
-class DojoBot(telepot.Bot):
+class DojoBot(telepot.async.Bot):
+    @asyncio.coroutine
     def print_description(self):
-        print("Bot:" + str(self.getMe()))
+        me =  yield from self.getMe()
+        print("Bot:" + str(me))
 
+    @asyncio.coroutine
     def tell_error(self, chat_id, text):
-        self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
+        return self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
 
     def declare_checkin(self, record):
         text = """
 {} Checked in!
 {}minutes for {}
 """.format(record.owner_name, record.planned_minutes, record.topic).strip()
-        self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
+        return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
 
     def declare_checkout(self, record):
         text = """
 {} Checked out from {} minute session!
 """.format(record.owner_name, record.planned_minutes).strip()
-        self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
+        return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
 
     def declare_abort(self, record):
         text = """
 {} Aborted the session :-(
 """.format(record.owner_name, record.planned_minutes).strip()
-        self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
+        return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
 
     def ask_topic(self, record):
         text = "Whatcha gonna do?"
-        self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
+        return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
 
     def ask_minutes(self, record):
         text = "How long?"
@@ -316,7 +337,7 @@ class DojoBot(telepot.Bot):
             ["30", "45", "60"],
             ["90", "120"]
         ]
-        self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardMarkup(
+        return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardMarkup(
             keyboard=kb))
 
 #
@@ -328,42 +349,40 @@ class DojoBotApp(object):
         self._store = store
         self._conversations = {}
 
-    def start(self):
-        self._bot.notifyOnMessage(self._handle, run_forever=True)
+    @asyncio.coroutine
+    def run(self):
+        yield from self._bot.messageLoop(self._handle)
 
-    def _start_checkin(self, message):
-        print("Got ci command")
-        # XXX: Look for ongoing checkin. Ask close or abort if any.
-        if not conv.needs_more():
-            return None
-        return conv
-
+    @asyncio.coroutine
     def _start_command_conversation(self, message):
         # XXX: We probably need "/quit" to  clear the state.
         if message.command in ["/ci", "/ci15", "/ci30", "/ci60"]:
             print("Got checkin command")
-            return CheckinConversation(self._bot, self._store, message)
+            return CheckinConversation.start(self._bot, self._store, message)
         if message.command == "/co":
             print("Got checkout command")
-            return CheckoutConversation(self._bot, self._store, message)
+            return CheckoutConversation.start(self._bot, self._store, message)
         if message.command == "/abort":
             print("Got abort command")
-            return AbortConversation(self._bot, self._store, message)
+            return AbortConversation.start(self._bot, self._store, message)
         if message.command == "/cstat":
             print("Got cstat command")
             return None
         print("Got unknown command")
         return None
 
+    @asyncio.coroutine
     def _handle(self, data):
         message = Message(data)
         conv = self._conversations.get(message.sender_id, None)
         if message.command:
             # XXX: Look for ongoing conversation. Quit it if any.
-            next_conv = self._start_command_conversation(message)
+            next_conv = yield from self._start_command_conversation(message)
             if not next_conv:
-                self._bot.tell_error(message.sender_id, "Unknown command {} :-(".format(message.command))
-            elif next_conv.needs_more():
+                yield from self._bot.tell_error(
+                    message.sender_id,
+                    "Unknown command {} :-(".format(message.command))
+            elif next_conv.needs_more:
                 self._conversations[message.sender_id] = next_conv
             else:
                 self._conversations[message.sender_id] = None
@@ -373,6 +392,6 @@ class DojoBotApp(object):
                 # XXX: Probably she wants to say something
                 return
             print("Keep conversation...")
-            conv.follow(message)
+            yield from conv.follow(message)
             if not conv.needs_more:
                 self._conversations[message.sender_id] = None

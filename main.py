@@ -1,5 +1,15 @@
 import os, sys
 import cdjbot
+import asyncio
+
+@asyncio.coroutine
+def start(loop, tg_token, mongo_url):
+    bot = cdjbot.DojoBot(tg_token)
+    store = cdjbot.MongoStore(mongo_url)
+    app = cdjbot.DojoBotApp(bot, store)
+    yield from store.print_description()
+    yield from bot.print_description()
+    yield from app.run()
 
 if __name__ == "__main__":
     tg_token = os.environ.get("CDJBOT_TELEGRAM_TOKEN")
@@ -11,10 +21,6 @@ if __name__ == "__main__":
         print("Error: Specify CDJBOT_MONGO_URL!")
         sys.exit(-1)
 
-    bot = cdjbot.DojoBot(tg_token)
-    store = cdjbot.MongoStore(mongo_url)
-    bot.print_description()
-    store.print_description()
-    app = cdjbot.DojoBotApp(bot, store)
-    app.start()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start(loop, tg_token, mongo_url))
     print("Done.")
