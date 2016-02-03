@@ -4,6 +4,7 @@ import asyncio
 import unittest
 import unittest.mock as mock
 import dockerip
+import dateutil.parser as dp
 
 def get_mock_coro(return_value=None):
     @asyncio.coroutine
@@ -41,6 +42,9 @@ def make_mock_bot():
 def make_message_with_text(text, **kwargs):
     return bot.Message(make_message_dict(text, **kwargs))
 
+def make_record_with_text(text, **kwargs):
+    msg = make_message_with_text(text, **kwargs)
+    return bot.Record.from_message(msg)
 
 class RecordTest(unittest.TestCase):
     def test_instantiate(self):
@@ -205,6 +209,20 @@ class MongoStoreTest(unittest.TestCase):
         self._store.update_record(open1a.with_closed())
         open1b = self._store.find_last_open_for(1)
         self.assertEqual(open1b, None)
+
+    def test_record_stats(self):
+        self._store.add_record(make_record_with_text('/ci15 REC1', user_id=1).with_closed())
+        self._store.add_record(make_record_with_text('/ci30 REC2', user_id=1).with_closed())
+        self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1).with_aborted())
+        self._store.add_record(make_record_with_text('/ci20 REC4', user_id=2).with_closed())
+        agg =self._store.record_stats(1)
+        self.assertEqual(agg.minutes, 45)
+        self.assertEqual(agg.close_count, 2)
+        self.assertEqual(agg.abort_count, 1)
+        zero =self._store.record_stats(1, dp.parse('2100-01-01 00:00:00'))
+        self.assertEqual(zero.minutes, 0)
+        self.assertEqual(zero.close_count, 0)
+        self.assertEqual(zero.abort_count, 0)
 
 
 class AppTest(unittest.TestCase):

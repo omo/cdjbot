@@ -7,7 +7,11 @@ import datetime
 import pymongo
 import functools as ft
 import asyncio
+import dateutil.parser as dp
 
+class RecordStats(collections.namedtuple(
+        'RecordStatsBase', ['minutes', 'close_count', 'abort_count'])):
+    pass
 
 #
 # Checkin record to persist.
@@ -225,6 +229,7 @@ class AbortConversation(ClosingConversation):
 #
 class MongoStore(object):
     COL_RECORD = 'records'
+    BEGINNING = dp.parse('2000-01-01 00:00:00')
 
     def __init__(self, url):
         self._client = pymongo.MongoClient(url)
@@ -259,6 +264,32 @@ class MongoStore(object):
         # XXX: Super inefficient. Use it only for testing.
         return self._records.count()
 
+    def record_stats(self, owner_id, since=BEGINNING):
+        closed_cond = { '$eq': [ '$state', Record.CLOSED ] }
+        aborted_cond = { '$eq': [ '$state', Record.ABORTED ] }
+        found = self._records.aggregate([
+            { '$match': {
+                'owner_id': owner_id,
+                'started_at': { '$gt': since }
+            } },
+            { '$project': {
+                '_id': 0,
+                'minutes': { '$cond': { 'if': closed_cond, 'then': '$planned_minutes', 'else': 0 } },
+                'close_count': { '$cond': { 'if': closed_cond, 'then': 1, 'else': 0 } },
+                'abort_count': { '$cond': { 'if': aborted_cond, 'then': 1, 'else': 0 } },
+            } },
+            { '$group': {
+                '_id': None,
+                'minutes':  { '$sum' : '$minutes' },
+                'close_count': { '$sum' : '$close_count' },
+                'abort_count': { '$sum' : '$abort_count' }
+            } }
+        ])
+
+        agg = [ f for f in found ]
+        if not len(agg):
+            return RecordStats(0, 0, 0)
+        return RecordStats(agg[0]['minutes'], agg[0]['close_count'], agg[0]['abort_count'])
 
 #
 # Wrapping message JSON dict
