@@ -128,12 +128,16 @@ class CheckinConversation(Conversation):
     @classmethod
     @asyncio.coroutine
     def start(cls, bot, store, init_message):
+        ongoing = store.find_last_open_for(init_message.sender_id)
+        if ongoing:
+            store.update_record(ongoing.with_closed())
         c = cls(bot, store, init_message)
         yield from c._carry()
         return c
 
     def __init__(self, bot, store, init_message):
         super().__init__(bot, store)
+
         self._asking = None
         self._record = Record.from_message(init_message)
 
@@ -442,9 +446,7 @@ class DojoBotApp(object):
     @asyncio.coroutine
     def _handle(self, data):
         message = Message(data)
-        conv = self._conversations.get(message.sender_id, None)
         if message.command:
-            # XXX: Look for ongoing conversation. Quit it if any.
             next_conv = yield from self._start_command_conversation(message)
             if not next_conv:
                 yield from self._bot.tell_error(
@@ -455,6 +457,7 @@ class DojoBotApp(object):
             else:
                 self._conversations[message.sender_id] = None
         else:
+            conv = self._conversations.get(message.sender_id, None)
             if not conv:
                 print("No ongoing conversation...")
                 # XXX: Probably she wants to say something

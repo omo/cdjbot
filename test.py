@@ -134,7 +134,6 @@ class CheckinTest(ConversationTest):
         co.follow(make_message_with_text("Topic"))
 
     def test_needs_topic_minutes(self):
-
         co = self.wait_for(
             bot.CheckinConversation.start(
                 self._bot, self._store, make_message_with_text('/ci')))
@@ -142,19 +141,26 @@ class CheckinTest(ConversationTest):
         self.assert_record_not_added()
         self.assert_asking_any(co)
 
-        self.wait_for(
-            co.follow(make_message_with_text('Topic')))
+        self.wait_for(co.follow(make_message_with_text('Topic')))
         self._bot.ask_minutes.assert_called_once_with(mock.ANY)
         self.assert_record_not_added()
         self.assert_asking_any(co)
 
-        self.wait_for(
-            co.follow(make_message_with_text('20')))
+        self.wait_for(co.follow(make_message_with_text('20')))
         self._bot.declare_checkin.assert_called_once_with(mock.ANY)
         self.assert_asking_none(co)
         self.assert_record_added()
         self.assertEqual(20, self.last_record().planned_minutes)
         self.assertEqual('Topic', self.last_record().topic)
+
+    def test_close_ongoing(self):
+        co1 = self.wait_for(
+            bot.CheckinConversation.start(
+                self._bot, self._store, make_message_with_text('/ci15 hello, world')))
+        co2 = self.wait_for(
+            bot.CheckinConversation.start(
+                self._bot, self._store, make_message_with_text('/ci30 hello, world')))
+        self.assertEqual(self._store.record_stats(USER_ID).minutes, 15)
 
     def test_wrong_minutes(self):
         co = self.wait_for(
