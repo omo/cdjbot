@@ -30,12 +30,14 @@ def make_message_dict(text, user_id=USER_ID):
 
 def make_mock_bot():
     b = mock.Mock(bot.DojoBot)
+    b.sendMessage = get_mock_coro()
     b.declare_checkin = get_mock_coro()
     b.declare_checkout = get_mock_coro()
     b.declare_abort = get_mock_coro()
     b.ask_minutes = get_mock_coro()
     b.ask_topic = get_mock_coro()
     b.tell_error = get_mock_coro()
+    b.tell_stats = get_mock_coro()
     return b
 
 
@@ -190,6 +192,15 @@ class ClosingTest(ConversationTest):
             self._bot, self._store, make_message_with_text('/co')))
         self.assertFalse(co.needs_more)
         self._bot.tell_error.assert_called_once_with(USER_ID, mock.ANY)
+
+
+class ClosingTest(ConversationTest):
+    def test_hello(self):
+        self._store.add_record(make_record_with_text('/ci15 REC1', user_id=1).with_closed())
+        co = self.wait_for(bot.StatConversation.start(
+            self._bot, self._store, make_message_with_text('/cstat')))
+        self.assertFalse(co.needs_more)
+        self._bot.tell_stats.assert_called_once_with(USER_ID, mock.ANY)
 
 
 class MongoStoreTest(unittest.TestCase):

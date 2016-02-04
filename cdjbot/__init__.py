@@ -225,6 +225,39 @@ class AbortConversation(ClosingConversation):
         # XXX: Include stats
 
 #
+# Quick Statistics
+#
+class StatConversation(Conversation):
+    @classmethod
+    def beginning_of_this_week(cls):
+        now = datetime.datetime.utcnow()
+        return now - datetime.timedelta(days=now.weekday())
+
+    @classmethod
+    def beginning_of_this_month(cls):
+        now = datetime.datetime.utcnow()
+        return now - datetime.timedelta(days=now.day)
+
+    @classmethod
+    @asyncio.coroutine
+    def start(cls, bot, store, init_message):
+        c = cls(bot, store)
+        owner = init_message.sender_id
+        wstats = store.record_stats(owner, cls.beginning_of_this_week())
+        mstats = store.record_stats(owner, cls.beginning_of_this_month())
+        yield from bot.tell_stats(owner, cls.format_weekly_monthly(wstats, mstats))
+        return c
+
+    @classmethod
+    def format_weekly_monthly(cls, wstats, mstats):
+        return """
+Weekly: {} CI, {} Minutes.
+Monthly: {} CI, {} Minutes.
+""".format(wstats.close_count, wstats.minutes,
+           mstats.close_count, mstats.minutes).strip()
+
+
+#
 # Mongo-backed Data Storage
 #
 class MongoStore(object):
@@ -338,6 +371,10 @@ class DojoBot(telepot.async.Bot):
     def tell_error(self, chat_id, text):
         return self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
 
+    @asyncio.coroutine
+    def tell_stats(self, chat_id, text):
+        return self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
+
     def declare_checkin(self, record):
         text = """
 {} Checked in!
@@ -398,7 +435,7 @@ class DojoBotApp(object):
             return AbortConversation.start(self._bot, self._store, message)
         if message.command == "/cstat":
             print("Got cstat command")
-            return None
+            return StatConversation.start(self._bot, self._store, message)
         print("Got unknown command")
         return None
 
