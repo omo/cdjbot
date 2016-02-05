@@ -144,9 +144,10 @@ class User(object):
 # Handling per-user, short-term chat continuation
 #
 class Conversation(object):
-    def __init__(self, bot, store):
+    def __init__(self, bot, store, msg):
         self._bot = bot
         self._store = store
+        self._user = store.find_user(msg.sender_id)
 
     def follow(self, update_message):
         raise Exception("Should never be called.")
@@ -173,17 +174,18 @@ class CheckinConversation(Conversation):
         return c
 
     def __init__(self, bot, store, init_message):
-        super().__init__(bot, store)
+        super().__init__(bot, store, init_message)
 
         self._asking = None
         self._record = Record.from_message(init_message)
+        self._stats = store.record_stats_weekly(init_message.sender_id)
 
     @asyncio.coroutine
     def _finish(self):
         self._asking = None
         self._store.add_record(self._record)
         # XXX: Broadcast to the dojo channel as well.
-        yield from self._bot.declare_checkin(self._record)
+        yield from self._bot.declare_checkin(self._record.owner_id, self._record)
 
     @asyncio.coroutine
     def _ask(self):
@@ -241,7 +243,7 @@ class ClosingConversation(Conversation):
 
 
     def __init__(self, bot, store, init_message):
-        super().__init__(bot, store)
+        super().__init__(bot, store, init_message)
 
 #
 # Checkout
@@ -270,22 +272,12 @@ class AbortConversation(ClosingConversation):
 #
 class StatConversation(Conversation):
     @classmethod
-    def beginning_of_this_week(cls):
-        now = datetime.datetime.utcnow()
-        return now - datetime.timedelta(days=now.weekday())
-
-    @classmethod
-    def beginning_of_this_month(cls):
-        now = datetime.datetime.utcnow()
-        return now - datetime.timedelta(days=now.day)
-
-    @classmethod
     @asyncio.coroutine
     def start(cls, bot, store, init_message):
-        c = cls(bot, store)
+        c = cls(bot, store, init_message)
         owner = init_message.sender_id
-        wstats = store.record_stats(owner, cls.beginning_of_this_week())
-        mstats = store.record_stats(owner, cls.beginning_of_this_month())
+        wstats = store.record_stats_weekly(owner)
+        mstats = store.record_stats_monthly(owner)
         yield from bot.tell_stats(owner, cls.format_weekly_monthly(wstats, mstats))
         return c
 
@@ -301,7 +293,7 @@ class LocatingConversation(Conversation):
     @classmethod
     @asyncio.coroutine
     def start(cls, bot, store, init_message):
-        c = cls(bot, store)
+        c = cls(bot, store, init_message)
         store.upsert_user(User(init_message.sender_dict, init_message.chat_dict))
         owner_id = init_message.sender_id
         owner_name = init_message.sender_name
@@ -326,6 +318,16 @@ class MongoStore(object):
     COL_RECORD = 'records'
     COL_USERS = 'users'
     BEGINNING = dp.parse('2000-01-01 00:00:00')
+
+    @classmethod
+    def beginning_of_this_week(cls):
+        now = datetime.datetime.utcnow()
+        return now - datetime.timedelta(days=now.weekday())
+
+    @classmethod
+    def beginning_of_this_month(cls):
+        now = datetime.datetime.utcnow()
+        return now - datetime.timedelta(days=now.day)
 
     def __init__(self, url):
         self._client = pymongo.MongoClient(url)
@@ -361,6 +363,12 @@ class MongoStore(object):
     def record_count(self):
         # XXX: Super inefficient. Use it only for testing.
         return self._records.count()
+
+    def record_stats_weekly(self, owner_id):
+        return self.record_stats(owner_id, self.beginning_of_this_week())
+
+    def record_stats_monthly(self, owner_id):
+        return self.record_stats(owner_id, self.beginning_of_this_month())
 
     def record_stats(self, owner_id, since=BEGINNING):
         closed_cond = { '$eq': [ '$state', Record.CLOSED ] }
@@ -454,7 +462,9 @@ class Message(object):
         return self._data.get('chat', None)
 
 
-
+#
+# Adding some apps pecific sendMessage variants.
+#
 class DojoBot(telepot.async.Bot):
     @asyncio.coroutine
     def print_description(self):
@@ -476,12 +486,12 @@ OK, I got {} is at {}({})
 """.format(owner_name, chat_title, chat_id).strip()
         return self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
 
-    def declare_checkin(self, record):
+    def declare_checkin(self, to, record):
         text = """
 {} Checked in!
 {}minutes for {}
 """.format(record.owner_name, record.planned_minutes, record.topic).strip()
-        return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
+        return self.sendMessage(to, text, reply_markup=nt.ReplyKeyboardHide())
 
     def declare_checkout(self, record):
         text = """
@@ -538,7 +548,7 @@ class DojoBotApp(object):
             print("Got cstat command")
             return StatConversation.start(self._bot, self._store, message)
         if message.command == "/iamhere":
-            print("Got cstat command")
+            print("Got aimhere command")
             return LocatingConversation.start(self._bot, self._store, message)
         print("Got unknown command")
         return None
@@ -560,9 +570,10 @@ class DojoBotApp(object):
             conv = self._conversations.get(message.sender_id, None)
             if not conv:
                 print("No ongoing conversation...")
-                # XXX: Probably she wants to say something
-                return
-            print("Keep conversation...")
-            yield from conv.follow(message)
-            if not conv.needs_more:
-                self._conversations[message.sender_id] = None
+                yield from self._bot.tell_error(
+                    message.sender_id, "I don't remember what we were talking about :-(")
+            else:
+                print("Keep conversation...")
+                yield from conv.follow(message)
+                if not conv.needs_more:
+                    self._conversations[message.sender_id] = None
