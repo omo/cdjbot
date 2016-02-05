@@ -5,6 +5,7 @@ import unittest
 import unittest.mock as mock
 import dockerip
 import dateutil.parser as dp
+import json
 
 def get_mock_coro(return_value=None):
     @asyncio.coroutine
@@ -38,6 +39,7 @@ def make_mock_bot():
     b.ask_topic = get_mock_coro()
     b.tell_error = get_mock_coro()
     b.tell_stats = get_mock_coro()
+    b.tell_where_you_are = get_mock_coro()
     return b
 
 
@@ -47,6 +49,36 @@ def make_message_with_text(text, **kwargs):
 def make_record_with_text(text, **kwargs):
     msg = make_message_with_text(text, **kwargs)
     return bot.Record.from_message(msg)
+
+MSG_JSON_WITH_CHAT = """
+{
+ "text": "/iamhere@foobot",
+ "from": {"username": "foo", "first_name": "Hajime", "id": 5678, "last_name": "Morrita"},
+ "date": 1454605481, "message_id": 34,
+ "chat": {"title": "The Title", "type": "group", "id": -6789}
+}
+"""
+
+def make_test_user():
+    return bot.User(
+        {"username": "foo", "first_name": "Hajime", "id": 5678, "last_name": "Morrita"},
+        {"title": "The Title", "type": "group", "id": -6789}
+    )
+
+def make_chat_aimhere_message():
+    return bot.Message(json.loads(MSG_JSON_WITH_CHAT))
+
+
+class MessageTest(unittest.TestCase):
+    def test_command_fix_postfix(self):
+        msg = make_message_with_text('/cmd@foobot')
+        self.assertEqual(msg.command, '/cmd')
+
+    def test_chat_id_title(self):
+        msg = make_chat_aimhere_message()
+        self.assertEqual(msg.chat_id, -6789)
+        self.assertEqual(msg.chat_title, 'The Title')
+
 
 class RecordTest(unittest.TestCase):
     def test_instantiate(self):
@@ -86,7 +118,6 @@ class RecordTest(unittest.TestCase):
 class ConversationTest(unittest.TestCase):
     def setUp(self):
         self._bot = make_mock_bot()
-
         self._store = make_clean_mongo_store()
         # http://stackoverflow.com/questions/23033939/how-to-test-python-3-4-asyncio-code
         self.loop = asyncio.new_event_loop()
@@ -200,7 +231,7 @@ class ClosingTest(ConversationTest):
         self._bot.tell_error.assert_called_once_with(USER_ID, mock.ANY)
 
 
-class ClosingTest(ConversationTest):
+class StatConversationTest(ConversationTest):
     def test_hello(self):
         self._store.add_record(make_record_with_text('/ci15 REC1', user_id=1).with_closed())
         co = self.wait_for(bot.StatConversation.start(
@@ -208,6 +239,15 @@ class ClosingTest(ConversationTest):
         self.assertFalse(co.needs_more)
         self._bot.tell_stats.assert_called_once_with(USER_ID, mock.ANY)
 
+class LocatingConversationTest(ConversationTest):
+    def test_hello(self):
+        co = self.wait_for(bot.LocatingConversation.start(
+            self._bot, self._store, make_chat_aimhere_message()))
+        self.assertFalse(co.needs_more)
+        self._bot.tell_where_you_are.assert_called_once_with(5678, 'foo', -6789, 'The Title')
+
+        u =  self._store.find_user(5678)
+        self.assertEqual(u.username, 'foo')
 
 class MongoStoreTest(unittest.TestCase):
     def setUp(self):
@@ -240,6 +280,12 @@ class MongoStoreTest(unittest.TestCase):
         self.assertEqual(zero.minutes, 0)
         self.assertEqual(zero.close_count, 0)
         self.assertEqual(zero.abort_count, 0)
+
+    def test_upsert_user(self):
+        self._store.upsert_user(make_test_user())
+        self.assertEqual(self._store._users.count(), 1)
+        self._store.upsert_user(make_test_user())
+        self.assertEqual(self._store._users.count(), 1)
 
 
 class AppTest(unittest.TestCase):

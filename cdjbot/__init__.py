@@ -9,9 +9,24 @@ import functools as ft
 import asyncio
 import dateutil.parser as dp
 
+# Has side effect here. Shouldn't we do this or don't we care?
+def rename_mongo_dict_id(d):
+    if d['_id']:
+        d['id'] = d['_id']
+        del d['_id']
+    return d
+
+
+# Omit 'id' - This value comes from _id and we'll have it anyway.
+def drop_dict_id_for_mongo(d):
+    del d['id']
+    return d
+
+
 class RecordStats(collections.namedtuple(
         'RecordStatsBase', ['minutes', 'close_count', 'abort_count'])):
     pass
+
 
 #
 # Checkin record to persist.
@@ -90,18 +105,40 @@ class Record(collections.namedtuple(
 
     @classmethod
     def from_dict(cls, d):
-        # Has side effect here. Shouldn't we do this or don't we care?
-        if d['_id']:
-            d['id'] = d['_id']
-            del d['_id']
-        return Record(**d)
+        return Record(**rename_mongo_dict_id(d))
 
     def to_dict(self):
         # http://stackoverflow.com/questions/26180528/python-named-tuple-to-dictionary
         d = vars(super()) or super()._asdict()
-        # Omit 'id' - This value comes from _id and we'll have it anyway.
-        del d['id']
-        return d
+        return drop_dict_id_for_mongo(d)
+
+
+class User(object):
+    def __init__(self, telegram, located):
+        self._telegram = telegram
+        self._located = located
+
+    @property
+    def username(self):
+        return self._telegram.get('username', None)
+
+    @property
+    def telegram_id(self):
+        return self._telegram['id']
+
+    @property
+    def chat_id(self):
+        return self._located['id']
+
+    def to_dict(self):
+        return {
+            'telegram': self._telegram,
+            'located': self._located
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        return User(d['telegram'], d['located'])
 
 #
 # Handling per-user, short-term chat continuation
@@ -260,18 +297,41 @@ Monthly: {} CI, {} Minutes.
 """.format(wstats.close_count, wstats.minutes,
            mstats.close_count, mstats.minutes).strip()
 
+class LocatingConversation(Conversation):
+    @classmethod
+    @asyncio.coroutine
+    def start(cls, bot, store, init_message):
+        c = cls(bot, store)
+        store.upsert_user(User(init_message.sender_dict, init_message.chat_dict))
+        owner_id = init_message.sender_id
+        owner_name = init_message.sender_name
+        chat_title = init_message.chat_title
+        chat_id = init_message.chat_id
+        yield from bot.tell_where_you_are(owner_id, owner_name, chat_id, chat_title)
+        return c
+
+    @classmethod
+    def format_weekly_monthly(cls, wstats, mstats):
+        return """
+Weekly: {} CI, {} Minutes.
+Monthly: {} CI, {} Minutes.
+""".format(wstats.close_count, wstats.minutes,
+           mstats.close_count, mstats.minutes).strip()
+
 
 #
 # Mongo-backed Data Storage
 #
 class MongoStore(object):
     COL_RECORD = 'records'
+    COL_USERS = 'users'
     BEGINNING = dp.parse('2000-01-01 00:00:00')
 
     def __init__(self, url):
         self._client = pymongo.MongoClient(url)
         self._db = self._client.get_default_database()
         self._records = self._db[self.COL_RECORD]
+        self._users = self._db[self.COL_USERS]
 
     @asyncio.coroutine
     def print_description(self):
@@ -280,6 +340,7 @@ class MongoStore(object):
     # This is MongoStore specific, used from unit tests.
     def drop_all_collections(self):
         self._db.drop_collection(self.COL_RECORD)
+        self._db.drop_collection(self.COL_USERS)
 
     def add_record(self, rec):
         self._records.insert_one(rec.to_dict())
@@ -328,6 +389,16 @@ class MongoStore(object):
             return RecordStats(0, 0, 0)
         return RecordStats(agg[0]['minutes'], agg[0]['close_count'], agg[0]['abort_count'])
 
+    def upsert_user(self, user):
+        return self._users.update_one(
+            { 'telegram.id': user.telegram_id },
+            { '$set': user.to_dict() }, upsert=True)
+
+    def find_user(self, id):
+        found = self._users.find_one({ 'telegram.id': id })
+        return User.from_dict(found) if found else None
+
+
 #
 # Wrapping message JSON dict
 #
@@ -348,7 +419,7 @@ class Message(object):
     def command(self):
         c = self._args[0]
         if c.startswith("/"):
-            return c
+            return re.sub('@.*', '', c)
         else:
             return None
 
@@ -358,11 +429,30 @@ class Message(object):
 
     @property
     def sender_name(self):
-        return self._data['from']['username'] or self._data['from']['firstname']
+        return self._data['from'].get('username', None) or self._data['from'].get('firstname', None)
+
+    @property
+    def sender_dict(self):
+        return self._data['from']
 
     @property
     def text(self):
         return self._data['text']
+
+    @property
+    def chat_id(self):
+        ch = self._data.get('chat', None)
+        return ch.get('id', None) if ch else None
+
+    @property
+    def chat_title(self):
+        ch = self._data.get('chat', None)
+        return ch.get('title', None) if ch else None
+
+    @property
+    def chat_dict(self):
+        return self._data.get('chat', None)
+
 
 
 class DojoBot(telepot.async.Bot):
@@ -377,6 +467,13 @@ class DojoBot(telepot.async.Bot):
 
     @asyncio.coroutine
     def tell_stats(self, chat_id, text):
+        return self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
+
+    @asyncio.coroutine
+    def tell_where_you_are(self, owner_id, owner_name, chat_id, chat_title):
+        text = """
+OK, I got {} is at {}({})
+""".format(owner_name, chat_title, chat_id).strip()
         return self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
 
     def declare_checkin(self, record):
@@ -440,6 +537,9 @@ class DojoBotApp(object):
         if message.command == "/cstat":
             print("Got cstat command")
             return StatConversation.start(self._bot, self._store, message)
+        if message.command == "/iamhere":
+            print("Got cstat command")
+            return LocatingConversation.start(self._bot, self._store, message)
         print("Got unknown command")
         return None
 
