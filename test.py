@@ -6,6 +6,8 @@ import unittest.mock as mock
 import dockerip
 import dateutil.parser as dp
 import json
+import time
+
 
 def get_mock_coro(return_value=None):
     @asyncio.coroutine
@@ -37,6 +39,7 @@ def make_mock_bot():
     b.declare_abort = get_mock_coro()
     b.ask_minutes = get_mock_coro()
     b.ask_topic = get_mock_coro()
+    b.ask_topic_with_suggestions = get_mock_coro()
     b.tell_error = get_mock_coro()
     b.tell_stats = get_mock_coro()
     b.tell_where_you_are = get_mock_coro()
@@ -162,8 +165,16 @@ class CheckinTest(ConversationTest):
         self.assertTrue(co.needs_more)
         self.assert_record_not_added()
         self._bot.ask_topic.assert_called_once_with(mock.ANY)
-        # Check state
-        co.follow(make_message_with_text("Topic"))
+        self.wait_for(co.follow(make_message_with_text("Topic")))
+
+    def test_needs_topics_suggested(self):
+        self._store.add_record(make_record_with_text('/ci15 LAST', user_id=USER_ID))
+        self._store.add_record(make_record_with_text('/ci20 LAST', user_id=USER_ID))
+        co = self.wait_for(
+            bot.CheckinConversation.start(
+                self._bot, self._store, make_message_with_text('/ci15')))
+        self._bot.ask_topic_with_suggestions.assert_called_once_with(mock.ANY, ['LAST'])
+        self.wait_for(co.follow(make_message_with_text("Topic")))
 
     def test_needs_topic_minutes(self):
         co = self.wait_for(
@@ -296,6 +307,15 @@ class MongoStoreTest(unittest.TestCase):
         self._store.upsert_user(make_test_user())
         self.assertEqual(self._store._users.count(), 1)
 
+    def test_find_recent_record_topics(self):
+        self._store.add_record(make_record_with_text('/ci15 REC1', user_id=1))
+        time.sleep(0.001)
+        self._store.add_record(make_record_with_text('/ci30 REC2', user_id=1))
+        time.sleep(0.001)
+        self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1))
+        self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1))
+        topics = self._store.find_recent_record_topics(1, 3)
+        self.assertEqual(topics, ["REC2", "REC3"])
 
 class AppTest(unittest.TestCase):
     def setUp(self):

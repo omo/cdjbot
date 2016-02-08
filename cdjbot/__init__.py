@@ -191,7 +191,11 @@ class CheckinConversation(Conversation):
     @asyncio.coroutine
     def _ask(self):
         if not self._record.topic:
-            yield from self._bot.ask_topic(self._record)
+            suggs = self._store.find_recent_record_topics(self._record.owner_id, 5)
+            if suggs:
+                yield from self._bot.ask_topic_with_suggestions(self._record, suggs)
+            else:
+                yield from self._bot.ask_topic(self._record)
             self._asking = self.TOPIC
         elif not self._record.planned_minutes:
             yield from self._bot.ask_minutes(self._record)
@@ -401,6 +405,17 @@ class MongoStore(object):
             return RecordStats(0, 0, 0)
         return RecordStats(agg[0]['minutes'], agg[0]['close_count'], agg[0]['abort_count'])
 
+    def find_recent_record_topics(self, owner_id, n):
+        topics = [
+            i['topic']
+            for i
+            in self._records.find(
+                { 'owner_id': owner_id }, limit=n
+            ).sort('started_at', pymongo.DESCENDING)
+        ]
+
+        return list(set(topics))
+
     def upsert_user(self, user):
         return self._users.update_one(
             { 'telegram.id': user.telegram_id },
@@ -514,6 +529,12 @@ OK, I got {} is at {}({})
     def ask_topic(self, record):
         text = "Whatcha gonna do?"
         return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
+
+    def ask_topic_with_suggestions(self, record, suggestions):
+        text = "Whatcha gonna do?"
+        kb = suggestions
+        return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardMarkup(
+            keyboard=kb))
 
     def ask_minutes(self, record):
         text = "How long?"
