@@ -152,7 +152,7 @@ class CheckinTest(ConversationTest):
                 self._bot, self._store, make_message_with_text('/ci15 hello, world')))
         self.assertEqual(1234, co.key)
         self.assertFalse(co.needs_more)
-        self._bot.declare_checkin.assert_called_once_with(USER_ID, mock.ANY)
+        self._bot.declare_checkin.assert_called_once_with(USER_ID, mock.ANY, mock.ANY)
         self.assert_record_added()
 
     def test_needs_topics(self):
@@ -179,7 +179,7 @@ class CheckinTest(ConversationTest):
         self.assert_asking_any(co)
 
         self.wait_for(co.follow(make_message_with_text('20')))
-        self._bot.declare_checkin.assert_called_once_with(USER_ID, mock.ANY)
+        self._bot.declare_checkin.assert_called_once_with(USER_ID, mock.ANY, mock.ANY)
         self.assert_asking_none(co)
         self.assert_record_added()
         self.assertEqual(20, self.last_record().planned_minutes)

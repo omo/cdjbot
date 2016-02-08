@@ -185,8 +185,8 @@ class CheckinConversation(Conversation):
         self._asking = None
         self._store.add_record(self._record)
         if self._user:
-            yield from self._bot.declare_checkin(self._user.chat_id, self._record)
-        yield from self._bot.declare_checkin(self._record.owner_id, self._record)
+            yield from self._bot.declare_checkin(self._user.chat_id, self._record, self._stats)
+        yield from self._bot.declare_checkin(self._record.owner_id, self._record, self._stats)
 
     @asyncio.coroutine
     def _ask(self):
@@ -321,14 +321,17 @@ class MongoStore(object):
     BEGINNING = dp.parse('2000-01-01 00:00:00')
 
     @classmethod
+    def _align_to_day(cls, d):
+        return datetime.datetime(d.year, d.month, d.day)
+    @classmethod
     def beginning_of_this_week(cls):
         now = datetime.datetime.utcnow()
-        return now - datetime.timedelta(days=now.weekday())
+        return cls._align_to_day(now - datetime.timedelta(days=now.weekday()))
 
     @classmethod
     def beginning_of_this_month(cls):
         now = datetime.datetime.utcnow()
-        return now - datetime.timedelta(days=now.day)
+        return cls._align_to_day(now - datetime.timedelta(days=now.day))
 
     def __init__(self, url):
         self._client = pymongo.MongoClient(url)
@@ -487,11 +490,13 @@ OK, I got {} is at {}({})
 """.format(owner_name, chat_title, chat_id).strip()
         return self.sendMessage(chat_id, text, reply_markup=nt.ReplyKeyboardHide())
 
-    def declare_checkin(self, to, record):
+    def declare_checkin(self, to, record, weekly_stats):
         text = """
-{} Checked in!
+{} Is Making {}{} Checked in!
 {}minutes for {}
-""".format(record.owner_name, record.planned_minutes, record.topic).strip()
+""".format(record.owner_name,
+           weekly_stats.close_count + 1, "th", # TODO(omo): Use correct ordinal
+           record.planned_minutes, record.topic).strip()
         return self.sendMessage(to, text, reply_markup=nt.ReplyKeyboardHide())
 
     def declare_checkout(self, record):
