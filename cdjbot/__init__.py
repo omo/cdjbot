@@ -535,7 +535,7 @@ class DojoBotApp(object):
     @asyncio.coroutine
     def _start_command_conversation(self, message):
         # XXX: We probably need "/quit" to  clear the state.
-        if message.command in ["/ci", "/ci15", "/ci30", "/ci60"]:
+        if message.command in ["/ci", "/ci15", "/ci30", "/ci45", "/ci60"]:
             print("Got checkin command")
             return CheckinConversation.start(self._bot, self._store, message)
         if message.command == "/co":
