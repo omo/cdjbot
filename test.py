@@ -59,9 +59,9 @@ MSG_JSON_WITH_CHAT = """
 }
 """
 
-def make_test_user():
+def make_test_user(user_id=5678):
     return bot.User(
-        {"username": "foo", "first_name": "Hajime", "id": 5678, "last_name": "Morrita"},
+        {"username": "foo", "first_name": "Hajime", "id": user_id, "last_name": "Morrita"},
         {"title": "The Title", "type": "group", "id": -6789}
     )
 
@@ -201,6 +201,12 @@ class CheckinTest(ConversationTest):
         self.wait_for(co.follow(make_message_with_text('Topic')))
         self.wait_for(co.follow(make_message_with_text('NotANumber')))
         self._bot.tell_error.assert_called_once_with(USER_ID, mock.ANY)
+
+    def test_finish_with_group(self):
+        self._store.upsert_user(make_test_user(USER_ID))
+        self.wait_for(bot.CheckinConversation.start(
+            self._bot, self._store, make_message_with_text('/ci15 Hello')))
+        self.assertEqual(self._bot.declare_checkin.call_count, 2)
 
 
 class ClosingTest(ConversationTest):

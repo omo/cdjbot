@@ -184,7 +184,8 @@ class CheckinConversation(Conversation):
     def _finish(self):
         self._asking = None
         self._store.add_record(self._record)
-        # XXX: Broadcast to the dojo channel as well.
+        if self._user:
+            yield from self._bot.declare_checkin(self._user.chat_id, self._record)
         yield from self._bot.declare_checkin(self._record.owner_id, self._record)
 
     @asyncio.coroutine
