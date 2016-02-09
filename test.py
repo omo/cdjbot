@@ -120,6 +120,15 @@ class RecordTest(unittest.TestCase):
         self.assertFalse(record.needs_resolution())
 
 
+class RecordStatsTest(unittest.TestCase):
+    def test_format_weekly_monthly(self):
+        text = bot.RecordStats.format_weekly_monthly(
+            bot.RecordStats(30, 1, 1),
+            bot.RecordStats(80, 3, 3),
+        )
+        self.assertTrue(0 < text.index('00:30'))
+        self.assertTrue(0 < text.index('01:20'))
+
 class ConversationTest(unittest.TestCase):
     def setUp(self):
         self._bot = make_mock_bot()

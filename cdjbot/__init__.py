@@ -27,6 +27,17 @@ class RecordStats(collections.namedtuple(
         'RecordStatsBase', ['minutes', 'close_count', 'abort_count'])):
     pass
 
+    @classmethod
+    def format_weekly_monthly(cls, wstats, mstats):
+        def to_hhmm(minutes):
+            return """{:02}:{:02}""".format(int(minutes/60), minutes%60)
+        
+        return """
+Weekly: {} CI, Spending {}.
+Monthly: {} CI, Spending {}.
+""".format(wstats.close_count, to_hhmm(wstats.minutes),
+           mstats.close_count, to_hhmm(mstats.minutes)).strip()
+
 
 #
 # Checkin record to persist.
@@ -288,16 +299,8 @@ class StatConversation(Conversation):
         owner = init_message.sender_id
         wstats = store.record_stats_weekly(owner)
         mstats = store.record_stats_monthly(owner)
-        yield from bot.tell_stats(owner, cls.format_weekly_monthly(wstats, mstats))
+        yield from bot.tell_stats(owner, RecordStats.format_weekly_monthly(wstats, mstats))
         return c
-
-    @classmethod
-    def format_weekly_monthly(cls, wstats, mstats):
-        return """
-Weekly: {} CI, {} Minutes.
-Monthly: {} CI, {} Minutes.
-""".format(wstats.close_count, wstats.minutes,
-           mstats.close_count, mstats.minutes).strip()
 
 
 class LocatingConversation(Conversation):
@@ -315,14 +318,6 @@ class LocatingConversation(Conversation):
         store.upsert_user(User(init_message.sender_dict, init_message.chat_dict))
         yield from bot.tell_where_you_are(owner_id, owner_name, chat_id, chat_title)
         return c
-
-    @classmethod
-    def format_weekly_monthly(cls, wstats, mstats):
-        return """
-Weekly: {} CI, {} Minutes.
-Monthly: {} CI, {} Minutes.
-""".format(wstats.close_count, wstats.minutes,
-           mstats.close_count, mstats.minutes).strip()
 
 
 #
