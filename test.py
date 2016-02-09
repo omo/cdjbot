@@ -38,6 +38,7 @@ def make_mock_bot():
     b.declare_checkout = get_mock_coro()
     b.declare_abort = get_mock_coro()
     b.ask_minutes = get_mock_coro()
+    b.ack_quit = get_mock_coro()
     b.ask_topic = get_mock_coro()
     b.ask_topic_with_suggestions = get_mock_coro()
     b.tell_error = get_mock_coro()
@@ -268,6 +269,21 @@ class LocatingConversationTest(ConversationTest):
         u =  self._store.find_user(5678)
         self.assertEqual(u.username, 'foo')
 
+    def test_message_with_no_group(self):
+        co = self.wait_for(bot.LocatingConversation.start(
+            self._bot, self._store, make_message_with_text('/iamhere')))
+        self.assertFalse(co.needs_more)
+        self._bot.tell_error.assert_called_once_with(USER_ID, mock.ANY)
+        self.assertEqual(self._store.find_user(USER_ID), None)
+
+
+class QuitConversationTest(ConversationTest):
+    def test_hello(self):
+        co = self.wait_for(bot.QuitConversation.start(
+            self._bot, self._store, make_message_with_text('/q')))
+        self.assertFalse(co.needs_more)
+        self._bot.ack_quit.assert_called_once_with(USER_ID)
+
 
 class MongoStoreTest(unittest.TestCase):
     def setUp(self):
@@ -315,7 +331,8 @@ class MongoStoreTest(unittest.TestCase):
         self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1))
         self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1))
         topics = self._store.find_recent_record_topics(1, 3)
-        self.assertEqual(topics, ["REC2", "REC3"])
+        self.assertEqual(sorted(topics), ["REC2", "REC3"])
+
 
 class AppTest(unittest.TestCase):
     def setUp(self):

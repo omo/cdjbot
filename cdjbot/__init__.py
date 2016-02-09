@@ -258,8 +258,15 @@ class CheckoutConversation(ClosingConversation):
     def _close(self, rec):
         self._store.update_record(rec.with_closed())
         yield from self._bot.declare_checkout(rec)
-        # XXX: Broadcast
         # XXX: Include stats
+
+class QuitConversation(Conversation):
+    @classmethod
+    @asyncio.coroutine
+    def start(cls, bot, store, init_message):
+        c = cls(bot, store, init_message)
+        yield from bot.ack_quit(init_message.sender_id)
+        return c
 
 #
 # Abort
@@ -269,8 +276,6 @@ class AbortConversation(ClosingConversation):
     def _close(self, rec):
         self._store.update_record(rec.with_aborted())
         yield from self._bot.declare_abort(rec)
-        # XXX: Broadcast
-        # XXX: Include stats
 
 #
 # Quick Statistics
@@ -294,16 +299,20 @@ Monthly: {} CI, {} Minutes.
 """.format(wstats.close_count, wstats.minutes,
            mstats.close_count, mstats.minutes).strip()
 
+
 class LocatingConversation(Conversation):
     @classmethod
     @asyncio.coroutine
     def start(cls, bot, store, init_message):
         c = cls(bot, store, init_message)
-        store.upsert_user(User(init_message.sender_dict, init_message.chat_dict))
         owner_id = init_message.sender_id
         owner_name = init_message.sender_name
         chat_title = init_message.chat_title
         chat_id = init_message.chat_id
+        if not chat_id:
+            yield from bot.tell_error(owner_id, "Use this command from within a group!")
+            return c
+        store.upsert_user(User(init_message.sender_dict, init_message.chat_dict))
         yield from bot.tell_where_you_are(owner_id, owner_name, chat_id, chat_title)
         return c
 
@@ -369,7 +378,6 @@ class MongoStore(object):
         return Record.from_dict(f)
 
     def record_count(self):
-        # XXX: Super inefficient. Use it only for testing.
         return self._records.count()
 
     def record_stats_weekly(self, owner_id):
@@ -530,6 +538,10 @@ OK, I got {} is at {}({})
         text = "Whatcha gonna do?"
         return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardHide())
 
+    def ack_quit(self, id):
+        text = "Call me anytime..."
+        return self.sendMessage(id, text, reply_markup=nt.ReplyKeyboardHide())
+
     def ask_topic_with_suggestions(self, record, suggestions):
         text = "Whatcha gonna do?"
         kb = suggestions
@@ -577,6 +589,9 @@ class DojoBotApp(object):
         if message.command == "/iamhere":
             print("Got aimhere command")
             return LocatingConversation.start(self._bot, self._store, message)
+        if message.command == "/q":
+            print("Got q command")
+            return QuitConversation.start(self._bot, self._store, message)
         print("Got unknown command")
         return None
 
