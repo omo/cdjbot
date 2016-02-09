@@ -33,8 +33,8 @@ class RecordStats(collections.namedtuple(
             return """{:02}:{:02}""".format(int(minutes/60), minutes%60)
         
         return """
-Weekly: {} CI, Spending {}.
-Monthly: {} CI, Spending {}.
+Weekly: {} CI, Spent {}.
+Monthly: {} CI, Spent {}.
 """.format(wstats.close_count, to_hhmm(wstats.minutes),
            mstats.close_count, to_hhmm(mstats.minutes)).strip()
 
@@ -203,8 +203,10 @@ class CheckinConversation(Conversation):
     def _ask(self):
         if not self._record.topic:
             suggs = self._store.find_recent_record_topics(self._record.owner_id, 5)
+            print(self._record.owner_id)
+            print(suggs)
             if suggs:
-                yield from self._bot.ask_topic_with_suggestions(self._record, suggs)
+                yield from self._bot.ask_topic_with_suggestions(self._record, [ [s] for s in suggs ])
             else:
                 yield from self._bot.ask_topic(self._record)
             self._asking = self.TOPIC
@@ -269,7 +271,10 @@ class CheckoutConversation(ClosingConversation):
     def _close(self, rec):
         self._store.update_record(rec.with_closed())
         yield from self._bot.declare_checkout(rec)
-        # XXX: Include stats
+        wstats = self._store.record_stats_weekly(rec.owner_id)
+        mstats = self._store.record_stats_monthly(rec.owner_id)
+        yield from self._bot.tell_stats(rec.owner_id, RecordStats.format_weekly_monthly(wstats, mstats))
+
 
 class QuitConversation(Conversation):
     @classmethod

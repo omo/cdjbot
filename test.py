@@ -243,6 +243,7 @@ class ClosingTest(ConversationTest):
         self.assertFalse(co.needs_more)
         self.assertEqual(bot.Record.CLOSED, self.last_record().state)
         self._bot.declare_checkout.assert_called_once_with(mock.ANY)
+        self._bot.tell_stats.assert_called_once_with(USER_ID, mock.ANY)
 
     def test_abort(self):
         self.add_checkin_record()
@@ -340,7 +341,7 @@ class MongoStoreTest(unittest.TestCase):
         self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1))
         self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1))
         topics = self._store.find_recent_record_topics(1, 3)
-        self.assertEqual(sorted(topics), ["REC2", "REC3"])
+        self.assertEqual(sorted(topics), [["REC2"], ["REC3"]])
 
 
 class AppTest(unittest.TestCase):
