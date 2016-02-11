@@ -151,17 +151,32 @@ class User(object):
     def from_dict(cls, d):
         return User(d['telegram'], d['located'])
 
+# A mockable asyncio.loop wrapper
+class Looper(object):
+    def __init__(self, loop):
+        self._loop = loop
+
+    @asyncio.coroutine
+    def sleep(self, seconds):
+        return asyncio.sleep(seconds, self._loop)
+
 #
 # Handling per-user, short-term chat continuation
 #
 class Conversation(object):
-    def __init__(self, bot, store, msg):
+    def __init__(self, bot, store, looper, msg):
         self._bot = bot
         self._store = store
+        self._looper = looper
         self._user = store.find_user(msg.sender_id)
 
+    @asyncio.coroutine
     def follow(self, update_message):
         raise Exception("Should never be called.")
+
+    @asyncio.coroutine
+    def see_you_later(self):
+        pass
 
     @property
     def needs_more(self):
@@ -176,16 +191,16 @@ class CheckinConversation(Conversation):
 
     @classmethod
     @asyncio.coroutine
-    def start(cls, bot, store, init_message):
+    def start(cls, bot, store, looper, init_message):
         ongoing = store.find_last_open_for(init_message.sender_id)
         if ongoing:
             store.update_record(ongoing.with_closed())
-        c = cls(bot, store, init_message)
+        c = cls(bot, store, looper, init_message)
         yield from c._carry()
         return c
 
-    def __init__(self, bot, store, init_message):
-        super().__init__(bot, store, init_message)
+    def __init__(self, bot, store, looper, init_message):
+        super().__init__(bot, store, looper, init_message)
 
         self._asking = None
         self._record = Record.from_message(init_message)
@@ -194,7 +209,7 @@ class CheckinConversation(Conversation):
     @asyncio.coroutine
     def _finish(self):
         self._asking = None
-        self._store.add_record(self._record)
+        self._record = self._store.add_record(self._record)
         if self._user:
             yield from self._bot.declare_checkin(self._user.chat_id, self._record, self._stats)
         yield from self._bot.declare_checkin(self._record.owner_id, self._record, self._stats)
@@ -203,8 +218,6 @@ class CheckinConversation(Conversation):
     def _ask(self):
         if not self._record.topic:
             suggs = self._store.find_recent_record_topics(self._record.owner_id, 5)
-            print(self._record.owner_id)
-            print(suggs)
             if suggs:
                 yield from self._bot.ask_topic_with_suggestions(self._record, [ [s] for s in suggs ])
             else:
@@ -243,6 +256,14 @@ class CheckinConversation(Conversation):
         yield from self._handle(update_message)
         yield from self._carry()
 
+    @asyncio.coroutine
+    def see_you_later(self):
+        owner_id = self._record.owner_id
+        yield from self._looper.sleep(self._record.planned_minutes * 60)
+        ongoing = self._store.find_last_open_for(owner_id)
+        if ongoing and ongoing.id == self._record.id:
+            yield from self._bot.ask_checkout(owner_id)
+
     @property
     def needs_more(self):
         return self._record and self._record.needs_resolution()
@@ -250,18 +271,14 @@ class CheckinConversation(Conversation):
 class ClosingConversation(Conversation):
     @classmethod
     @asyncio.coroutine
-    def start(cls, bot, store, init_message):
-        c = cls(bot, store, init_message)
+    def start(cls, bot, store, looper, init_message):
+        c = cls(bot, store, looper, init_message)
         rec = c._store.find_last_open_for(init_message.sender_id)
         if not rec:
             yield from c._bot.tell_error(init_message.sender_id, "No ongoing checkin :-(")
         else:
             yield from c._close(rec)
         return c
-
-
-    def __init__(self, bot, store, init_message):
-        super().__init__(bot, store, init_message)
 
 #
 # Checkout
@@ -279,8 +296,8 @@ class CheckoutConversation(ClosingConversation):
 class QuitConversation(Conversation):
     @classmethod
     @asyncio.coroutine
-    def start(cls, bot, store, init_message):
-        c = cls(bot, store, init_message)
+    def start(cls, bot, store, looper, init_message):
+        c = cls(bot, store, looper, init_message)
         yield from bot.ack_quit(init_message.sender_id)
         return c
 
@@ -299,8 +316,8 @@ class AbortConversation(ClosingConversation):
 class StatConversation(Conversation):
     @classmethod
     @asyncio.coroutine
-    def start(cls, bot, store, init_message):
-        c = cls(bot, store, init_message)
+    def start(cls, bot, store, looper, init_message):
+        c = cls(bot, store, looper, init_message)
         owner = init_message.sender_id
         wstats = store.record_stats_weekly(owner)
         mstats = store.record_stats_monthly(owner)
@@ -311,8 +328,8 @@ class StatConversation(Conversation):
 class LocatingConversation(Conversation):
     @classmethod
     @asyncio.coroutine
-    def start(cls, bot, store, init_message):
-        c = cls(bot, store, init_message)
+    def start(cls, bot, store, looper, init_message):
+        c = cls(bot, store, looper, init_message)
         owner_id = init_message.sender_id
         owner_name = init_message.sender_name
         chat_title = init_message.chat_title
@@ -362,7 +379,8 @@ class MongoStore(object):
         self._db.drop_collection(self.COL_USERS)
 
     def add_record(self, rec):
-        self._records.insert_one(rec.to_dict())
+        result = self._records.insert_one(rec.to_dict())
+        return rec.with_id(result.inserted_id)
 
     def find_last_open_for(self, owner_id):
         cursor = self._records.find({ 'owner_id': owner_id, 'state': Record.OPEN })
@@ -516,7 +534,7 @@ OK, I got {} is at {}({})
     def declare_checkin(self, to, record, weekly_stats):
         text = """
 {} Is Making {}{} Checked in!
-{}minutes for {}
+{} minutes for {}
 """.format(record.owner_name,
            weekly_stats.close_count + 1, "th", # TODO(omo): Use correct ordinal
            record.planned_minutes, record.topic).strip()
@@ -558,14 +576,21 @@ OK, I got {} is at {}({})
         return self.sendMessage(record.owner_id, text, reply_markup=nt.ReplyKeyboardMarkup(
             keyboard=kb))
 
+    def ask_checkout(self, id):
+        text = "How are you coming along?"
+        kb = [['/co', '/abort']]
+        return self.sendMessage(id, text, reply_markup=nt.ReplyKeyboardMarkup(
+            keyboard=kb))
+
 #
 # God class.
 #
 class DojoBotApp(object):
-    def __init__(self, bot, store):
+    def __init__(self, bot, store, looper):
         self._bot = bot
         self._store = store
         self._conversations = {}
+        self._looper = looper
 
     @asyncio.coroutine
     def run(self):
@@ -576,22 +601,22 @@ class DojoBotApp(object):
         # XXX: We probably need "/quit" to  clear the state.
         if message.command in ["/ci", "/ci15", "/ci30", "/ci45", "/ci60"]:
             print("Got checkin command")
-            return CheckinConversation.start(self._bot, self._store, message)
+            return CheckinConversation.start(self._bot, self._store, self._looper, message)
         if message.command == "/co":
             print("Got checkout command")
-            return CheckoutConversation.start(self._bot, self._store, message)
+            return CheckoutConversation.start(self._bot, self._store, self._looper, message)
         if message.command == "/abort":
             print("Got abort command")
-            return AbortConversation.start(self._bot, self._store, message)
-        if message.command == "/cstat":
+            return AbortConversation.start(self._bot, self._store, self._looper, message)
+        if message.command == "/cstats":
             print("Got cstat command")
-            return StatConversation.start(self._bot, self._store, message)
+            return StatConversation.start(self._bot, self._store, self._looper, message)
         if message.command == "/iamhere":
             print("Got aimhere command")
-            return LocatingConversation.start(self._bot, self._store, message)
+            return LocatingConversation.start(self._bot, self._store, self._looper, message)
         if message.command == "/q":
             print("Got q command")
-            return QuitConversation.start(self._bot, self._store, message)
+            return QuitConversation.start(self._bot, self._store, self._looper, message)
         print("Got unknown command")
         return None
 
@@ -608,6 +633,7 @@ class DojoBotApp(object):
                 self._conversations[message.sender_id] = next_conv
             else:
                 self._conversations[message.sender_id] = None
+                yield from next_conv.see_you_later()
         else:
             conv = self._conversations.get(message.sender_id, None)
             if not conv:

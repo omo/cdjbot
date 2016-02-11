@@ -44,8 +44,13 @@ def make_mock_bot():
     b.tell_error = get_mock_coro()
     b.tell_stats = get_mock_coro()
     b.tell_where_you_are = get_mock_coro()
+    b.ask_checkout = get_mock_coro()
     return b
 
+class FakeLooper():
+    @asyncio.coroutine
+    def sleep(self, seconds):
+        pass
 
 def make_message_with_text(text, **kwargs):
     return bot.Message(make_message_dict(text, **kwargs))
@@ -158,11 +163,13 @@ class ConversationTest(unittest.TestCase):
     def wait_for(self, future):
         return self.loop.run_until_complete(future)
 
+
 class CheckinTest(ConversationTest):
     def test_no_more(self):
         co = self.wait_for(
             bot.CheckinConversation.start(
-                self._bot, self._store, make_message_with_text('/ci15 hello, world')))
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/ci15 hello, world')))
         self.assertEqual(1234, co.key)
         self.assertFalse(co.needs_more)
         self._bot.declare_checkin.assert_called_once_with(USER_ID, mock.ANY, mock.ANY)
@@ -171,7 +178,8 @@ class CheckinTest(ConversationTest):
     def test_needs_topics(self):
         co = self.wait_for(
             bot.CheckinConversation.start(
-                self._bot, self._store, make_message_with_text('/ci15')))
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/ci15')))
         self.assertTrue(co.needs_more)
         self.assert_record_not_added()
         self._bot.ask_topic.assert_called_once_with(mock.ANY)
@@ -182,14 +190,16 @@ class CheckinTest(ConversationTest):
         self._store.add_record(make_record_with_text('/ci20 LAST', user_id=USER_ID))
         co = self.wait_for(
             bot.CheckinConversation.start(
-                self._bot, self._store, make_message_with_text('/ci15')))
-        self._bot.ask_topic_with_suggestions.assert_called_once_with(mock.ANY, ['LAST'])
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/ci15')))
+        self._bot.ask_topic_with_suggestions.assert_called_once_with(mock.ANY, [['LAST']])
         self.wait_for(co.follow(make_message_with_text("Topic")))
 
     def test_needs_topic_minutes(self):
         co = self.wait_for(
             bot.CheckinConversation.start(
-                self._bot, self._store, make_message_with_text('/ci')))
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/ci')))
         self._bot.ask_topic.assert_called_once_with(mock.ANY)
         self.assert_record_not_added()
         self.assert_asking_any(co)
@@ -209,16 +219,19 @@ class CheckinTest(ConversationTest):
     def test_close_ongoing(self):
         co1 = self.wait_for(
             bot.CheckinConversation.start(
-                self._bot, self._store, make_message_with_text('/ci15 hello, world')))
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/ci15 hello, world')))
         co2 = self.wait_for(
             bot.CheckinConversation.start(
-                self._bot, self._store, make_message_with_text('/ci30 hello, world')))
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/ci30 hello, world')))
         self.assertEqual(self._store.record_stats(USER_ID).minutes, 15)
 
     def test_wrong_minutes(self):
         co = self.wait_for(
             bot.CheckinConversation.start(
-                self._bot, self._store, make_message_with_text('/ci')))
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/ci')))
         self.wait_for(co.follow(make_message_with_text('Topic')))
         self.wait_for(co.follow(make_message_with_text('NotANumber')))
         self._bot.tell_error.assert_called_once_with(USER_ID, mock.ANY)
@@ -226,8 +239,17 @@ class CheckinTest(ConversationTest):
     def test_finish_with_group(self):
         self._store.upsert_user(make_test_user(USER_ID))
         self.wait_for(bot.CheckinConversation.start(
-            self._bot, self._store, make_message_with_text('/ci15 Hello')))
+            self._bot, self._store, FakeLooper(),
+            make_message_with_text('/ci15 Hello')))
         self.assertEqual(self._bot.declare_checkin.call_count, 2)
+
+    def test_see_you_later(self):
+        co = self.wait_for(bot.CheckinConversation.start(
+            self._bot, self._store, FakeLooper(),
+            make_message_with_text('/ci15 Hello')))
+        self.assertFalse(co.needs_more)
+        self.wait_for(co.see_you_later())
+        self._bot.ask_checkout.assert_called_once_with(USER_ID)
 
 
 class ClosingTest(ConversationTest):
@@ -239,7 +261,8 @@ class ClosingTest(ConversationTest):
         self.add_checkin_record()
         co = self.wait_for(
             bot.CheckoutConversation.start(
-                self._bot, self._store, make_message_with_text('/co')))
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/co')))
         self.assertFalse(co.needs_more)
         self.assertEqual(bot.Record.CLOSED, self.last_record().state)
         self._bot.declare_checkout.assert_called_once_with(mock.ANY)
@@ -248,14 +271,17 @@ class ClosingTest(ConversationTest):
     def test_abort(self):
         self.add_checkin_record()
         co = self.wait_for(
-            bot.AbortConversation.start(self._bot, self._store, make_message_with_text('/co')))
+            bot.AbortConversation.start(
+                self._bot, self._store, FakeLooper(),
+                make_message_with_text('/co')))
         self.assertFalse(co.needs_more)
         self.assertEqual(bot.Record.ABORTED, self.last_record().state)
         self._bot.declare_abort.assert_called_once_with(mock.ANY)
 
     def test_error(self):
         co = self.wait_for(bot.CheckoutConversation.start(
-            self._bot, self._store, make_message_with_text('/co')))
+            self._bot, self._store, FakeLooper(),
+            make_message_with_text('/co')))
         self.assertFalse(co.needs_more)
         self._bot.tell_error.assert_called_once_with(USER_ID, mock.ANY)
 
@@ -264,7 +290,8 @@ class StatConversationTest(ConversationTest):
     def test_hello(self):
         self._store.add_record(make_record_with_text('/ci15 REC1', user_id=1).with_closed())
         co = self.wait_for(bot.StatConversation.start(
-            self._bot, self._store, make_message_with_text('/cstat')))
+            self._bot, self._store, FakeLooper(),
+            make_message_with_text('/cstat')))
         self.assertFalse(co.needs_more)
         self._bot.tell_stats.assert_called_once_with(USER_ID, mock.ANY)
 
@@ -272,7 +299,8 @@ class StatConversationTest(ConversationTest):
 class LocatingConversationTest(ConversationTest):
     def test_hello(self):
         co = self.wait_for(bot.LocatingConversation.start(
-            self._bot, self._store, make_chat_aimhere_message()))
+            self._bot, self._store, FakeLooper(),
+            make_chat_aimhere_message()))
         self.assertFalse(co.needs_more)
         self._bot.tell_where_you_are.assert_called_once_with(5678, 'foo', -6789, 'The Title')
 
@@ -281,7 +309,8 @@ class LocatingConversationTest(ConversationTest):
 
     def test_message_with_no_group(self):
         co = self.wait_for(bot.LocatingConversation.start(
-            self._bot, self._store, make_message_with_text('/iamhere')))
+            self._bot, self._store, FakeLooper(),
+            make_message_with_text('/iamhere')))
         self.assertFalse(co.needs_more)
         self._bot.tell_error.assert_called_once_with(USER_ID, mock.ANY)
         self.assertEqual(self._store.find_user(USER_ID), None)
@@ -290,7 +319,8 @@ class LocatingConversationTest(ConversationTest):
 class QuitConversationTest(ConversationTest):
     def test_hello(self):
         co = self.wait_for(bot.QuitConversation.start(
-            self._bot, self._store, make_message_with_text('/q')))
+            self._bot, self._store, FakeLooper(),
+            make_message_with_text('/q')))
         self.assertFalse(co.needs_more)
         self._bot.ack_quit.assert_called_once_with(USER_ID)
 
@@ -341,30 +371,31 @@ class MongoStoreTest(unittest.TestCase):
         self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1))
         self._store.add_record(make_record_with_text('/ci60 REC3', user_id=1))
         topics = self._store.find_recent_record_topics(1, 3)
-        self.assertEqual(sorted(topics), [["REC2"], ["REC3"]])
+        self.assertEqual(sorted(topics), ["REC2", "REC3"])
 
 
 class AppTest(unittest.TestCase):
     def setUp(self):
         self._bot = make_mock_bot()
         self._store = make_clean_mongo_store()
+        self._looper = FakeLooper()
         # http://stackoverflow.com/questions/23033939/how-to-test-python-3-4-asyncio-code
-        self.loop = asyncio.new_event_loop()
+        self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(None)
 
     def tearDown(self):
-        self.loop.close()
+        self._loop.close()
 
     def wait_for(self, future):
-        return self.loop.run_until_complete(future)
+        return self._loop.run_until_complete(future)
 
     def test_handle(self):
-        app = bot.DojoBotApp(self._bot, self._store)
+        app = bot.DojoBotApp(self._bot, self._store, self._looper)
         self.wait_for(
             app._handle(make_message_dict('/ci15 hello, world')))
 
     def test_checkin_checkout(self):
-        app = bot.DojoBotApp(self._bot, self._store)
+        app = bot.DojoBotApp(self._bot, self._store, self._looper)
         self.wait_for(
             app._handle(make_message_dict('/ci15 hello, world')))
         self.wait_for(

@@ -4,9 +4,10 @@ import asyncio
 
 @asyncio.coroutine
 def start(loop, tg_token, mongo_url):
-    bot = cdjbot.DojoBot(tg_token)
+    bot = cdjbot.DojoBot(tg_token, loop)
     store = cdjbot.MongoStore(mongo_url)
-    app = cdjbot.DojoBotApp(bot, store)
+    looper = cdjbot.Looper(loop)
+    app = cdjbot.DojoBotApp(bot, store, looper)
     yield from store.print_description()
     yield from bot.print_description()
     yield from app.run()
