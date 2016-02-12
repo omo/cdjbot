@@ -10,7 +10,9 @@ DOCKER_HOST_ADDR=${shell python dockerip.py}
 DOCKER_IMAGE_NAME=morrita/cdjbot
 DOCKER_ENVS=-e CDJBOT_TELEGRAM_TOKEN="${CDJBOT_TELEGRAM_TOKEN}" -e CDJBOT_MONGO_URL="${CDJBOT_MONGO_URL}"
 
-dbuild:
+dclean-images:
+	-docker rmi ${shell docker images | grep --color=never "^<none>" | awk '{print $$3}'}
+dbuild: dclean-images
 	docker build --rm -t ${DOCKER_IMAGE_NAME} .
 dbash: dbuild
 	docker run --rm -t -i ${DOCKER_IMAGE_NAME} /bin/bash
@@ -27,7 +29,9 @@ mongostop:
 mongocli:
 	docker run -it --rm mongo sh -c 'exec mongo --shell --host ${DOCKER_HOST_ADDR}'
 
-
+# XXX: Not sure this really work. Let's try on next push.
+pushclean:
+	ssh -i ${SSH_KEYFILE} ${HOST} 'docker images | grep --color=never "^<none>" | awk "{print \$$3}"'
 push:
 	scp -i ${SSH_KEYFILE} conf/cdjbot.conf ${HOST}:/tmp/cdjbot.conf
 	ssh -i ${SSH_KEYFILE} ${HOST} docker pull ${DOCKER_IMAGE_NAME}

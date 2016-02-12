@@ -151,6 +151,7 @@ class User(object):
     def from_dict(cls, d):
         return User(d['telegram'], d['located'])
 
+
 # A mockable asyncio.loop wrapper
 class Looper(object):
     def __init__(self, loop):
@@ -159,6 +160,7 @@ class Looper(object):
     @asyncio.coroutine
     def sleep(self, seconds):
         return asyncio.sleep(seconds, self._loop)
+
 
 #
 # Handling per-user, short-term chat continuation
@@ -181,6 +183,7 @@ class Conversation(object):
     @property
     def needs_more(self):
         return False
+
 
 #
 # Checkin
@@ -268,6 +271,7 @@ class CheckinConversation(Conversation):
     def needs_more(self):
         return self._record and self._record.needs_resolution()
 
+
 class ClosingConversation(Conversation):
     @classmethod
     @asyncio.coroutine
@@ -279,6 +283,7 @@ class ClosingConversation(Conversation):
         else:
             yield from c._close(rec)
         return c
+
 
 #
 # Checkout
@@ -300,6 +305,7 @@ class QuitConversation(Conversation):
         c = cls(bot, store, looper, init_message)
         yield from bot.ack_quit(init_message.sender_id)
         return c
+
 
 #
 # Abort
